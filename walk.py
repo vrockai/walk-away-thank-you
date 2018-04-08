@@ -16,6 +16,7 @@ corpusDirectory = "corpus/foo/xml/en/1989/98067/"
 # corpusDirectory = "corpus/OpenSubtitles2018/xml/en/"
 walk_away = []
 BUFFER_SIZE = 30
+BUFFER_CENTER = BUFFER_SIZE // 2
 AWAY_PAUSE = 10000
 WALKAWAY_DEFAULT_FILE = 'walkaway'
 
@@ -71,8 +72,8 @@ def parse_line(line):
     return None
 
 
-def replace_time(token):
-    # print(token, token[0][1], token[1][2])
+# Compute the "pause" between last subtitle disappearance and next subtitle appearance taken from the buffer.
+def compute_time_intervals(token):
     if token[0][2] and token[1][1]:
         return '|- ' + str((token[1][1] - token[0][2]) // 1000)
 
@@ -82,24 +83,24 @@ def replace_time(token):
     return token[0][0]
 
 
-def print_line(buffer):
-    bar = list(buffer)
-    foo = zip(bar, bar[1:])
+# Convert buffer to a human readable string with computed pauses between subtitles.
+def format_buffer(buffer):
+    buffer_list = list(buffer)
+    buffer_token_pairs = zip(buffer_list, buffer_list[1:])
+    human_readable_buffer = map(compute_time_intervals, buffer_token_pairs)
 
-    # print(list(foo))
-    xxx = map(replace_time, foo)
-    return ' '.join(xxx)
+    return ' '.join(human_readable_buffer)
 
 
-def is_pause_after(buffer):
-    foo = list(buffer)
-    BUFFER_CENTER = BUFFER_SIZE // 2
-    bar = foo[BUFFER_CENTER: BUFFER_CENTER + 3]
-    kaz = zip(bar, bar[1:])
+def is_pause_after_thank_you(buffer):
+    buffer_list = list(buffer)
 
-    for token in kaz:
-        if token[0][2] and token[1][1]:
-            return (token[1][1] - token[0][2]) > AWAY_PAUSE
+    buffer_sublist = buffer_list[BUFFER_CENTER: BUFFER_CENTER + 3]
+    token_pairs = zip(buffer_sublist, buffer_sublist[1:])
+
+    for token_pair in token_pairs:
+        if token_pair[0][2] and token_pair[1][1]:
+            return (token_pair[1][1] - token_pair[0][2]) > AWAY_PAUSE
 
     return False
 
@@ -124,12 +125,15 @@ def indentify_walk_aways(movie_map):
 
     logging.info('AWAY_PAUSE: %d' % AWAY_PAUSE)
 
+    # Getting the filename_list for the sake of progressbar - we need to know the total number of files.
     filename_list = list(glob.iglob(corpusDirectory + '**/*.xml.gz', recursive=True))
-    c = 0
+    processed_files_number = 0
 
     bar = progressbar.ProgressBar(max_value=len(filename_list))
+
     for filename in filename_list:
         walkaways = {}
+
         with gzip.open(filename, 'r') as subtitle_file:
             movie_id = get_movie_id(filename)
 
@@ -146,25 +150,24 @@ def indentify_walk_aways(movie_map):
 
                 # If thank you is in the middle of the buffer
                 is_thank_you = buffer[BUFFER_SIZE // 2][0] is not None and 'thank' in buffer[BUFFER_SIZE // 2][0]
-                if is_thank_you:
-                    is_pause_after_thank_you = is_pause_after(buffer)
-                    if is_pause_after_thank_you:
-                        context = print_line(buffer)
-                        buffer_start_value = buffer_start(buffer)
-                        if 'occurence' not in walkaways:
-                            walkaways = {
-                                'movie': movie_map[movie_id],
-                                'occurence': {}
-                            }
 
-                        walkaways['occurence'][buffer_start_value] = context
+                if is_thank_you and is_pause_after_thank_you(buffer):
+                    context = format_buffer(buffer)
+                    buffer_start_value = buffer_start(buffer)
+                    if 'occurence' not in walkaways:
+                        walkaways = {
+                            'movie': movie_map[movie_id],
+                            'occurence': {}
+                        }
+
+                    walkaways['occurence'][buffer_start_value] = context
 
         if 'occurence' in walkaways:
             walk_aways.append(walkaways)
             log_walkaways(walkaways)
 
-        bar.update(c)
-        c = c + 1
+        bar.update(processed_files_number)
+        processed_files_number = processed_files_number + 1
     return walk_aways
 
 
