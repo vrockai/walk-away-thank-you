@@ -1,6 +1,7 @@
 import glob
 import gzip
 import json
+import logging
 import re
 import dictionary
 import datetime
@@ -8,8 +9,10 @@ import pickle
 import progressbar
 from collections import deque
 
-#corpusDirectory = "corpus/foo/xml/en/1989/98067/"
-corpusDirectory = "corpus/foo/xml/en/"
+logging.basicConfig(filename='walk-away.log', format='%(asctime)s %(message)s', level=logging.DEBUG)
+
+corpusDirectory = "corpus/foo/xml/en/1989/98067/"
+# corpusDirectory = "corpus/foo/xml/en/"
 # corpusDirectory = "corpus/OpenSubtitles2018/xml/en/"
 walk_away = []
 BUFFER_SIZE = 30
@@ -109,76 +112,72 @@ def buffer_start(buffer):
     return 'None'
 
 
-def log_file_foo(log, file_foo):
-    log.write(file_foo['movie']['name'] + '\n')
+def log_walkaways(file_foo):
+    logging.info(file_foo['movie']['name'] + '\n')
     for timestamp, context in file_foo['occurence'].items():
-        log.write('  ' + timestamp + ': ' + context + '\n')
-    log.write('\n')
+        logging.info('  ' + timestamp + ': ' + context + '\n')
+    logging.info('\n')
 
 
 def indentify_walk_aways(movie_map):
     walk_aways = []
-    log_filename = 'data/walk-aways-%s.log' % str(datetime.datetime.now())
 
-    with open(log_filename, 'w+') as log:
-        log.write(str(datetime.datetime.now()))
-        log.write('\n')
-        log.write('AWAY_PAUSE: %d' % AWAY_PAUSE)
-        log.write('\n')
-        filename_list = list(glob.iglob(corpusDirectory + '**/*.xml.gz', recursive=True))
-        c=0
+    logging.info('AWAY_PAUSE: %d' % AWAY_PAUSE)
 
-        bar = progressbar.ProgressBar(max_value=len(filename_list))
-        for filename in filename_list:
-            file_foo = {}
-            with gzip.open(filename, 'r') as subtitle_file:
-                movie_id = get_movie_id(filename)
+    filename_list = list(glob.iglob(corpusDirectory + '**/*.xml.gz', recursive=True))
+    c = 0
 
-                buffer = deque([['', None, None]] * BUFFER_SIZE, maxlen=BUFFER_SIZE)
+    bar = progressbar.ProgressBar(max_value=len(filename_list))
+    for filename in filename_list:
+        walkaways = {}
+        with gzip.open(filename, 'r') as subtitle_file:
+            movie_id = get_movie_id(filename)
 
-                for line in subtitle_file:
+            buffer = deque([['', None, None]] * BUFFER_SIZE, maxlen=BUFFER_SIZE)
 
-                    token = parse_line(line)
+            for line in subtitle_file:
 
-                    if token is None or token[0] is None:
-                        continue
+                token = parse_line(line)
 
-                    buffer.append(token)
+                if token is None or token[0] is None:
+                    continue
 
-                    # If thank you is in the middle of the buffer
-                    is_thank_you = buffer[BUFFER_SIZE // 2][0] is not None and 'thank' in buffer[BUFFER_SIZE // 2][0]
-                    if is_thank_you:
-                        is_pause_after_thank_you = is_pause_after(buffer)
-                        if is_pause_after_thank_you:
-                            context = print_line(buffer)
-                            buffer_start_value = buffer_start(buffer)
-                            if 'occurence' not in file_foo:
-                                file_foo = {
-                                    'movie': movie_map[movie_id],
-                                    'occurence': {}
-                                }
+                buffer.append(token)
 
-                            file_foo['occurence'][buffer_start_value] = context
+                # If thank you is in the middle of the buffer
+                is_thank_you = buffer[BUFFER_SIZE // 2][0] is not None and 'thank' in buffer[BUFFER_SIZE // 2][0]
+                if is_thank_you:
+                    is_pause_after_thank_you = is_pause_after(buffer)
+                    if is_pause_after_thank_you:
+                        context = print_line(buffer)
+                        buffer_start_value = buffer_start(buffer)
+                        if 'occurence' not in walkaways:
+                            walkaways = {
+                                'movie': movie_map[movie_id],
+                                'occurence': {}
+                            }
 
-            if 'occurence' in file_foo:
-                walk_aways.append(file_foo)
-                log_file_foo(log, file_foo)
+                        walkaways['occurence'][buffer_start_value] = context
 
-            bar.update(c)
-            c = c + 1
-        return walk_aways
+        if 'occurence' in walkaways:
+            walk_aways.append(walkaways)
+            log_walkaways(walkaways)
+
+        bar.update(c)
+        c = c + 1
+    return walk_aways
 
 
 if __name__ == '__main__':
     movie_dictionary = {}
     try:
-        print('Loading dictionary...')
+        logging.info('Loading dictionary...')
         movie_dictionary = dictionary.load_dictionary()
     except FileNotFoundError:
-        print('Building dictionary...')
+        logging.info('Building dictionary...')
         movie_dictionary = dictionary.build_dictionary()
 
-    print('Reading...')
+    logging.info('Reading...')
     walk_aways = indentify_walk_aways(movie_dictionary)
 
     with open('data/%s-%s.pkl' % (WALKAWAY_DEFAULT_FILE, str(datetime.datetime.now())), 'wb+') as output:
